@@ -1,0 +1,67 @@
+[** ---------------------------------------------------------------
+ * Generates form layouts for Foundation entities
+*/]
+[module axlViewsForm('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[for (fe : Component | m.getAppArchitectureFrontendElements())]
+[fe.genMenu(m)/]
+[/for]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public genMenu(fe : Component, m : Model)]
+[file ('modules/' + fe.name + '/src/main/resources/views/Menu.xml', false, 'UTF-8')]
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<object-views xmlns="http://axelor.com/xml/ns/object-views"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://axelor.com/xml/ns/object-views
+              http://axelor.com/xml/ns/object-views/object-views_5.3.xsd">
+
+
+  <menuitem name="menu-[fe.name/]-root" 
+    order="[fe.valueOf('_ORDER-MENU_NAME').substring(1, 2).toInteger()/]" 
+    title="[fe.valueOf('_ORDER-MENU_NAME').substring(4)/]" 
+    icon="fa-shopping-cart" icon-background="orange"/>
+
+  <menuitem name="menu-[fe.name/]-conf" parent="menu-[fe.name/]-root" title="Configuration" order="99"/>
+
+[for (c : Class | m.getBackendCounterpart(fe.name).packagedElement->filter(Class))]
+  [if (c.valueOf('_ORDER-MENU_NAME') <> null)] 
+  <menuitem name="menu-[fe.name/]-[c.name.toLower()/]" parent="menu-[fe.name/][if (c.hasProperty('_BP') = false)]-conf[else]-root[/if]"
+    order="[c.valueOf('_ORDER-MENU_NAME').substring(1, 2).toInteger()/]" 
+    title="[c.valueOf('_ORDER-MENU_NAME').substring(4)/]" 
+    action="[fe.name/].[c.name.toLower()/]s"/>
+
+  <action-view name="[fe.name/].[c.name.toLower()/]s" model="[m.valueOf('company_group')/].[c._package.name/].db.[c.name/]" title="[c.valueOf('DISPLAY_NAME_PL')/]">
+    <view type="grid"/>
+    <view type="form"/>
+  </action-view>
+  [/if]
+
+[/for]
+</object-views>
+[/file]
+[/template]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+
+[query public getAppArchitectureFrontendElements(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Component)
+/]
+[query public getBackendCounterpart(emod : Model, cname : String) : Bag(Package) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Package)->select(name = cname)
+/]
+[** Common--------------------------------------------------------------*/]
+

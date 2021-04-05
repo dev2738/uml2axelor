@@ -1,0 +1,444 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+
+[query public getDatabaseServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'DatabaseServer')
+/]
+
+[query public getApplicationServerAPI(emod : Model, apiname : String) : Bag(Dependency) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer').packagedElement->filter(Dependency).source->filter(Port)->select(name = apiname).getClientDependencies()
+/]
+[query public getAppModuleFrontendElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Component)
+/]
+[query public getEnvId(m : Model) : String = 
+  m.getExecEnvArchitectureElement().valueOf('env_id')
+/]
+[query public getExecEnvArchitectureElement(emod : Model) : Package = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture')->filter(Package)->any(1=1)
+/]
+[query public getEnvMachine(m : Model) : ExecutionEnvironment = 
+  m.packagedElement->select(name = m.getEnvId())->filter(ExecutionEnvironment)->any(1=1)
+/]
+
+
+[** ====================================================================*/]
+[template public generate(m : Model)]
+[comment @main/]
+[m.readmeMD()/]
+[m.appProperties()/]
+[m.buildGradle()/]
+[m.settingsGradle()/]
+[for (fe : Component | m.getAppModuleFrontendElement())]
+[fe.moduleBuildGradle()/]
+[/for]
+[/template]
+
+[template public readmeMD(m : Model)]
+[file ('README.md', false, 'UTF-8')]
+# [m.name/]
+> Short blurb about what your product does.
+
+['['/]!['['/]NPM Version]['['/]npm-image]]['['/]npm-url]
+['['/]!['['/]Build Status]['['/]travis-image]]['['/]travis-url]
+['['/]!['['/]Downloads Stats]['['/]npm-downloads]]['['/]npm-url]
+
+One to two paragraph statement about your product and what it does.
+
+![ '['/]](header.png)
+
+## Installation
+
+OS X & Linux:
+
+```sh
+npm install my-crazy-module --save
+```
+
+Windows:
+
+```sh
+edit autoexec.bat
+```
+
+## Usage example
+
+A few motivating and useful examples of how your product can be used. Spice this up with code blocks and potentially more screenshots.
+
+_For more examples and usage, please refer to the ['['/]Wiki]['['/]wiki]._
+
+## Development setup
+
+Describe how to install all development dependencies and how to run an automated test-suite of some kind. Potentially do this for multiple platforms.
+
+```sh
+make install
+npm test
+```
+
+## Release History
+
+* 0.2.1
+    * CHANGE: Update docs (module code remains unchanged)
+* 0.2.0
+    * CHANGE: Remove `setDefaultXYZ()`
+    * ADD: Add `init()`
+* 0.1.1
+    * FIX: Crash when calling `baz()` (Thanks @GenerousContributorName!)
+* 0.1.0
+    * The first proper release
+    * CHANGE: Rename `foo()` to `bar()`
+* 0.0.1
+    * Work in progress
+
+## Meta
+
+Your Name – ['['/]@YourTwitter](https://twitter.com/dbader_org) – YourEmail@example.com
+
+Distributed under the XYZ license. See ``LICENSE`` for more information.
+
+['['/]https://github.com/yourname/github-link](https://github.com/dbader/)
+
+## Contributing
+
+1. Fork it (<https://github.com/yourname/yourproject/fork>)
+2. Create your feature branch (`git checkout -b feature/fooBar`)
+3. Commit your changes (`git commit -am 'Add some fooBar'`)
+4. Push to the branch (`git push origin feature/fooBar`)
+5. Create a new Pull Request
+
+<!-- Markdown link & img dfn's -->
+['['/]npm-image]: https://img.shields.io/npm/v/datadog-metrics.svg?style=flat-square
+['['/]npm-url]: https://npmjs.org/package/datadog-metrics
+['['/]npm-downloads]: https://img.shields.io/npm/dm/datadog-metrics.svg?style=flat-square
+['['/]travis-image]: https://img.shields.io/travis/dbader/node-datadog-metrics/master.svg?style=flat-square
+['['/]travis-url]: https://travis-ci.org/dbader/node-datadog-metrics
+['['/]wiki]: https://github.com/yourname/yourproject/wiki
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public appProperties(m : Model)]
+[file ('src/main/resources/application.properties', false, 'UTF-8')]
+################################################################################
+#
+# Application Configuration
+#
+################################################################################
+
+# Database settings
+# ~~~~~
+db.default.driver = [m.getDatabaseServerElement().valueOf('driver')/]
+db.default.ddl = update
+db.default.url = [m.getApplicationServerAPI('DB_API').name.toLower()/]:[m.getDatabaseServerElement().valueOf('URI_scheme_designator')/][m.getDatabaseServerElement().valueOf('container_name')/]:[m.getApplicationServerAPI('DB_API').target->filter(Port).name/]/[m.name/]_db
+db.default.user = [m.getEnvMachine().valueOf('machine_type')/]_adm
+db.default.password = 
+
+# Application Information
+# ~~~~~
+application.name = [m.valueOf('application_name')/]
+application.description = [m.valueOf('application_description')/] 
+application.version = [m.valueOf('application_version')/]
+application.author = Digibens Ltda
+
+# link to be used with header logo
+application.home = http://localhost:8080/[m.name/]
+    
+# application header logo, should be 40px in height
+# ~~~~~
+application.logo = img/[m.name/].png
+
+# Set default language
+application.locale = en
+
+# Set default CSS theme, for example `blue`
+application.theme = [m.valueOf('application_theme')/]
+
+# Application Mode
+# ~~~~~
+# Set to 'dev' for development mode else 'prod'
+application.mode = [m.getEnvMachine().valueOf('app_props_application_mode')/]
+
+# Date Format
+# ~~~~~
+date.format = dd/MM/yyyy
+
+# Timezone
+# ~~~~~
+date.timezone = UTC
+
+# Menu
+# ~~~~~
+# Set menu style (left, top, both)
+application.menu = both
+
+# View options
+# ~~~~~
+application.view.toolbar-title = hide
+
+# Link to the online help
+# ~~~~~
+application.help = 
+
+# Application time out in minutes
+# ~~~~~
+session.timeout = 480
+
+# Data export (csv) encoding
+# ~~~~
+# Use Windows-1252, ISO-8859-1 or ISO-8859-15 if targeting ms excel
+# (excel does not recognize utf8 encoded csv)
+data.export.encoding = ISO-8859-15
+
+# Encrypted fields
+# ~~~~
+# Old encryption password for migration
+#encryption.password.old = *****
+# Encryption password
+# ENSURE THAT YOU DON'T LOSE IT.
+# If you lose this password, you will be unable to access variables stored in database.
+encryption.password = [m.valueOf('encryption_password')/]
+# Algorithm mode (CBC or GCM)
+encryption.algorithm = CBC
+
+# User password pattern
+# ~~~~
+# at least 8 characters with at least three of these four types: lowercase, uppercase, digit, special
+user.password.pattern = (((?=.*['['/]a-z])(?=.*['['/]A-Z])(?=.*\\d))|((?=.*['['/]a-z])(?=.*['['/]A-Z])(?=.*\\W))|((?=.*['['/]a-z])(?=.*\\d)(?=.*\\W))|((?=.*['['/]A-Z])(?=.*\\d)(?=.*\\W))).{8,}
+
+# Storage path for export action
+# ~~~~~
+data.export.dir = {java.io.tmpdir}/axelor
+
+# Storage path for upload files (attachments)
+# ~~~~~
+# use {user.home} key to save files under user home directory, or
+# use absolute path where server user have write permission.
+file.upload.dir = {java.io.tmpdir}/axelor
+
+# Maximum upload size (in MB)
+# ~~~~~
+file.upload.size = 5
+
+# Indicate if the birt engine to use is the embedded engine or external engine
+# Default : true
+# ~~~~~
+axelor.report.use.embedded.engine =
+
+# Link to report enginePath (external engine)
+# Example : http://localhost:8080/birt
+# Default : {webapps server}/birt
+# ~~~~~
+axelor.report.engine =
+
+# Reports resource path (external engine)
+# Default : report
+# ~~~~~
+axelor.report.resource.path =
+
+# external directory for birt rptdesign (internal engine)
+# if the directory does not exist or the report is not found
+# then reports in axelor modules will be used.
+axelor.report.dir = {user.home}/data/reports
+
+# Reports custom fonts path
+reports.fonts.config = fonts/ReportFonts.xml
+
+# Enable/disable demo data
+# ~~~~~
+data.import.demo-data = false
+
+# Custom context values
+# ~~~~~
+context.app = com.axelor.apps.base.service.app.AppService
+context.appLogo = com.axelor.apps.base.service.user.UserService:getUserActiveCompanyLogoLink
+
+# Hibernate full-text search
+# ~~~~~
+hibernate.search.default.directory_provider = none
+hibernate.search.default.indexBase = {java.io.tmpdir}/axelor
+
+# HikariCP connection pool
+# ~~~~~
+hibernate.hikari.minimumIdle = 5
+hibernate.hikari.maximumPoolSize = 20
+hibernate.hikari.idleTimeout = 300000
+
+# CORS configuration to allow cross origin requests
+# ~~~~~
+# regular expression to test allowed origin or * to allow all (not recommended)
+#cors.allow.origin = *
+#cors.allow.credentials = true
+#cors.allow.methods = GET,PUT,POST,DELETE,HEAD,OPTIONS
+#cors.allow.headers = Origin,Accept,X-Requested-With,Content-Type,Access-Control-Request-Method,Access-Control-Request-Headers
+
+# Logging
+# ~~~~~
+# Custom logback configuration can be provided with `logging.config` property pointing
+# to a custom `logback.xml`. In this case, all the logging configuration provided here
+# will be ignored.
+#
+# Following settings can be used to configure logging system automatically.
+#
+#logging.path = {user.home}/.axelor/logs
+#logging.pattern.file = %d{yyyy-MM-dd HH:mm:ss.SSS} %5p ${PID:- } --- ['['/]%t] %-40.40logger{39} : %m%n
+#logging.pattern.console = %clr(%d{yyyy-MM-dd HH:mm:ss.SSS}){faint} %clr(%5p) %clr(${PID:- }){magenta} %clr(---){faint} %clr(['['/]%15.15t]){faint} %clr(%-40.40logger{39}){cyan} %clr(:){faint} %m%n
+
+logging.level.root = ERROR
+logging.level.com.axelor = DEBUG
+
+# Log everything. Good for troubleshooting
+#logging.level.org.hibernate = INFO
+
+# Log all SQL DML statements as they are executed
+#logging.level.org.hibernate.SQL = DEBUG
+#logging.level.org.hibernate.engine.jdbc = DEBUG
+
+# Log all SQL DDL statements as they are executed
+#logging.level.org.hibernate.tool.hbm2ddl = INFO
+
+# Log all JDBC parameters
+#logging.level.org.hibernate.type = ALL
+
+# Log transactions
+#logging.level.org.hibernate.transaction = DEBUG
+
+# Log L2-Cache
+#logging.level.org.hibernate.cache = DEBUG
+
+# Log JDBC resource acquisition
+#logging.level.org.hibernate.jdbc = TRACE
+#logging.level.org.hibernate.service.jdbc = TRACE
+
+# Log connection pooling
+#logging.level.com.zaxxer.hikari = INFO
+
+# Quartz scheduler
+# ~~~~~
+quartz.enable = [m.valueOf('quartz_enable')/]
+quartz.threadCount = 5
+
+# Allows to open maximum 10 Tabs
+view.tabs.max = 10
+
+#Activate global tracking log feature (track data modification/access in compliance with GDPR)
+hibernate.session_factory.interceptor = com.axelor.apps.base.tracking.GlobalAuditInterceptor
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public buildGradle(m : Model)]
+[file ('build.gradle', false, 'UTF-8')]
+buildscript {
+    ext.repos = {
+        jcenter()
+        mavenCentral()
+        maven { url 'https://plugins.gradle.org/m2/' }
+        maven { url 'https://repository.axelor.com/nexus/public/' }
+    }
+    ext.platformVersion = '5.3.+'
+    ext.appVersion = '5.3.0'
+    repositories repos
+    dependencies {
+        classpath "com.axelor:axelor-gradle:${platformVersion}"
+    }
+}
+
+allprojects {
+    repositories repos
+}
+
+apply plugin: 'com.axelor.app'
+
+axelor {
+    title = 'Digibens Ltda :: [m.valueOf('application_name')/]'
+}
+
+allprojects {
+    apply plugin: 'idea'
+    apply plugin: 'eclipse'
+
+    group '[m.valueOf('company_group')/]'
+    version = '[m.valueOf('application_version')/]'
+
+    sourceCompatibility = 1.8
+    targetCompatibility = 1.8
+}
+
+
+dependencies {
+    // add dependencies
+
+    // mandatory for base service to run first
+    implementation 'com.axelor.apps:axelor-base:6.0.3@jar'
+    implementation 'com.axelor.apps:axelor-message:6.0.3@jar'
+     implementation 'com.axelor.apps:axelor-admin:6.0.3@jar'
+     implementation 'com.axelor.apps:axelor-exception:6.0.3@jar'
+     implementation 'com.axelor.apps:axelor-tool:6.0.3@jar'
+     implementation 'com.google.apis:google-api-services-people:v1-rev537-1.25.0@jar'
+     implementation 'com.google.api-client:google-api-client:1.25.0@jar'
+     implementation 'com.google.http-client:google-http-client:1.25.0@jar'
+     implementation 'org.apache.commons:commons-math3:3.6.1@jar'
+     implementation 'org.iban4j:iban4j:3.2.1@jar'
+     implementation 'org.mnode.ical4j:ical4j:2.2.0@jar'
+     implementation 'commons-httpclient:commons-httpclient:3.1@jar'
+     implementation 'org.apache.jackrabbit:jackrabbit-webdav:2.8.0@jar'
+     implementation 'org.mnode.ical4j:ical4j-connector:1.0.1@jar'
+     implementation 'com.google.zxing:core:3.3.2@jar'
+     implementation 'com.itextpdf:itextpdf:5.5.13.1@jar'
+     implementation 'com.itextpdf:itext7-core:7.0.4'
+
+     gradle.appModules.each { dir ->
+	implementation project(":modules:$dir.name")
+     }
+}
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public settingsGradle(m : Model)]
+[file ('settings.gradle', false, 'UTF-8')]
+//Include all modules
+rootProject.name = "[m.name/]"
+
+def modules = ['['/]]
+file("modules").traverse(type: groovy.io.FileType.DIRECTORIES, maxDepth: 1) { it ->
+    if(new File(it, "build.gradle").exists()) { modules.add(it) }
+}
+
+gradle.ext.appModules = modules
+
+modules.each { dir ->
+	include "modules:$dir.name"
+	project(":modules:$dir.name").projectDir = dir
+}
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public moduleBuildGradle(fe : Component)]
+[file ('modules/' + fe.name + '/build.gradle', false, 'UTF-8')]
+apply plugin: "com.axelor.app-module"
+
+axelor {
+	title "[fe.valueOf('displayname')/]"
+	description "[fe.valueOf('displayname')/] Module"
+}
+
+dependencies {
+	implementation 'com.axelor.apps:axelor-base:6.0.3@jar'
+}
+[/file]
+[/template]
+

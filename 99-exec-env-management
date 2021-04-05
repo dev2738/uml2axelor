@@ -1,0 +1,374 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public getEnvId(m : Model) : String = 
+  m.getExecEnvArchitectureElement().valueOf('env_id')
+/]
+
+[query public getEnvMachine(m : Model) : ExecutionEnvironment = 
+  m.packagedElement->select(name = m.getEnvId())->filter(ExecutionEnvironment)->any(1=1)
+/]
+
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+
+[query public getDatabaseServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'DatabaseServer')
+/]
+[query public getApplicationServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer')
+/]
+
+[query public getApplicationServerAPI(emod : Model, apiname : String) : Bag(Dependency) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer').packagedElement->filter(Dependency).source->filter(Port)->select(name = apiname).getClientDependencies()
+/]
+[query public getExecEnvArchitectureElement(emod : Model) : Package = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture')->filter(Package)->any(1=1)
+/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[m.playbookSensitiveDataFile()/]
+[m.inventoryFile()/]
+[m.netDeployPlaybook()/]
+[m.netDestroyPlaybook()/]
+[m.deployBash()/]
+[m.destroyBash()/]
+[/template]
+
+[** ====================================================================*/]
+
+[template public playbookSensitiveDataFile(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/sensitive_data.ini', false, 'UTF-8')]
+# Fill-in all the below which are required params. No quotes needed in the value side.
+
+['['/][m.getDatabaseServerElement().name/]]
+superuser_password=
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+
+[template public inventoryFile(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/inventory/hosts', false, 'UTF-8')]
+['['/]host_machine]
+[m.getEnvMachine().valueOf('machine_id')/]  ansible_host=[m.getEnvMachine().valueOf('ip_address')/]  ansible_user=[m.getEnvMachine().valueOf('login_user')/]  ansible_ssh_private_key_file=[m.getEnvMachine().valueOf('ssh_private_key_file')/]
+
+['['/]host_machine:vars]
+ansible_python_interpreter=/usr/bin/python3
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+
+[template public netDeployPlaybook(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/network_deploy_playbook.yml', false, 'UTF-8')]
+---
+- name: Goal is creation of frontend network '[m.getEnvId()/]_net', and backend (internal) network 'internal_net'
+  gather_facts: no
+  hosts: [m.getEnvMachine().valueOf('machine_id')/]
+  [if (m.getEnvMachine().valueOf('machine_type') = 'localhost')]
+  connection: local
+  [/if]
+  [if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+  connection: ssh
+  become: yes
+  [/if]
+
+  tasks:
+    - name: base packages - pip3
+      apt: name=python3-pip state=present 
+
+    - name: "Install required python modules"
+      pip: 
+        name: docker
+      
+    - name: Initialize EE data on remote host
+      copy:
+        src: EE_data/
+        dest: /EE_data
+        
+    - name: Create a symbolic link to EE_data
+      ansible.builtin.file:
+        src: /EE_data
+        dest: /[m.getEnvMachine().valueOf('login_user')/]/EE_data_link
+        state: link
+    
+    
+    - name: Create the frontend (proxy) network 
+      community.general.docker_network:
+        name: [m.getEnvId()/]_net
+
+
+    - name: Create the backend (internal) network 
+      community.general.docker_network:
+        name: internal_net
+
+
+    - name: Create a volume for DatabaseServer container
+      community.general.docker_volume:
+        name: db_data
+
+
+    - name: Create a volume for ApplicationServer container
+      community.general.docker_volume:
+        name: app_data
+
+
+    [if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+    - name: Creates the SSL-certicate shared directory
+      file:
+        path: /EE_data/bind_mounts/certs
+        state: directory
+        
+        
+    - name: Create Proxy container and connect to network
+      community.general.docker_container:
+        name: rproxy
+        image: "jwilder/nginx-proxy"
+        restart_policy: unless-stopped
+        ports:
+          - "80:80"
+          - "443:443"
+        volumes:
+          - "/EE_data/bind_mounts/certs:/etc/nginx/certs:ro"
+          - /etc/nginx/vhost.d 
+          - /usr/share/nginx/html 
+          - /var/run/docker.sock:/tmp/docker.sock:ro 
+        labels:
+          com.github.jrcs.letsencrypt_nginx_proxy_companion.nginx_proxy : "true"
+        networks:
+          - name: [m.getEnvId()/]_net
+          
+          
+    - name: Create Let'sEncrypt container and connect to network
+      community.general.docker_container:
+        name: cert-one
+        image: "jrcs/letsencrypt-nginx-proxy-companion"
+        restart_policy: unless-stopped
+        volumes_from:
+          - rproxy
+        volumes: 
+          - "/EE_data/bind_mounts/certs:/etc/nginx/certs:rw"
+          - /var/run/docker.sock:/var/run/docker.sock:ro
+        env:
+          ACME_CA_URI:  "[m.getEnvMachine().valueOf('lets_encrypt_api')/]"
+        networks:
+          - name: [m.getEnvId()/]_net
+    [/if]
+        
+          
+    - name: Create Database Server container and connect to network
+      community.general.docker_container:
+        name: [m.getDatabaseServerElement().valueOf('container_name')/]
+        image: "[m.getDatabaseServerElement().valueOf('docker_image')/]"
+        restart_policy: unless-stopped
+        env:
+          PGDATA: "/var/lib/postgresql/data/pgdata"
+          POSTGRES_PASSWORD: "{{ lookup('ini', 'superuser_password section=[m.getDatabaseServerElement().name/] file=sensitive_data.ini') }}"
+        volumes:
+          - db_data:/var/lib/postgresql/data/pgdata
+        networks:
+          - name: internal_net
+
+   
+    - name: Create Application Server container and connect to networks
+      community.general.docker_container:
+        name: [m.getApplicationServerElement().valueOf('container_name')/]
+        image: "[m.getApplicationServerElement().valueOf('docker_image')/]"
+        restart_policy: unless-stopped
+        ports:
+          - "[m.getApplicationServerElement().valueOf('app_port')/]:[m.getApplicationServerElement().valueOf('app_port')/]"
+        volumes:
+          [m.getApplicationServerElement().valueOf('volumes')/]
+        env:
+          [if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+          VIRTUAL_PORT: "[m.getApplicationServerElement().valueOf('app_port')/]"
+          VIRTUAL_HOST:      "[m.getEnvMachine().valueOf('domain_name')/]"
+          LETSENCRYPT_HOST:  "[m.getEnvMachine().valueOf('domain_name')/]"
+          LETSENCRYPT_EMAIL: "[m.getEnvMachine().valueOf('admin_email')/]"
+          [/if]
+        networks:
+          - name: [m.getEnvId()/]_net
+          - name: internal_net
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+
+[template public netDestroyPlaybook(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/network_destroy_playbook.yml', false, 'UTF-8')]
+---
+- name: Goal is destruction of filesystem EE objects
+  gather_facts: no
+  hosts: [m.getEnvMachine().valueOf('machine_id')/]
+  [if (m.getEnvMachine().valueOf('machine_type') = 'localhost')]
+  connection: local
+  [/if]
+  [if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+  connection: ssh
+  become: yes
+  [/if]
+
+  tasks:
+    - name: Destroy a symbolic link to EE_data
+      ansible.builtin.file:
+        path: /[m.getEnvMachine().valueOf('login_user')/]/EE_data_link
+        state: absent
+
+    - name: Destroy EE data directory
+      file:
+        path: /EE_data/
+        state: absent
+        
+[/file]
+[/template]
+
+[** ====================================================================*/]
+
+[** ---------------------------------------------------------------*/]
+[template public deployBash(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/1_deploy.sh', false, 'UTF-8')]
+#!/bin/bash
+clear
+#Including .ini file
+. ./sensitive_data.ini
+echo "Checking if sensitive_data.ini fields are all defined...."
+echo "PostgreSQL super user password=${superuser_password}   "
+if ['['/] -z $superuser_password ]; then
+  echo "Error: one or more fields are not defined. Fix then retry. Exiting...\n"
+  exit 1
+fi
+echo
+echo "Creating docker context ..."
+[if (m.getEnvMachine().valueOf('machine_type') = 'localhost')]
+docker context create [m.getEnvId()/] \
+  --docker host=unix:///var/run/docker.sock \
+  --description="[m.getEnvMachine().valueOf('machine_type')/] [m.getEnvMachine().valueOf('machine_id')/] engine"
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo "Switching to the new context [m.getEnvId()/]..."
+docker context use [m.getEnvId()/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+[/if]
+echo "Creating docker context ..."
+[if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+docker context create [m.getEnvId()/] \
+  --docker host=ssh://[m.getEnvMachine().valueOf('login_user')/]@[m.getEnvMachine().valueOf('ip_address')/] \
+  --description="[m.getEnvMachine().valueOf('machine_type')/] [m.getEnvMachine().valueOf('machine_id')/] engine"
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo "Switching to the new context [m.getEnvId()/]..."
+docker context use [m.getEnvId()/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+[/if]
+echo
+echo "Deploying the network..."
+ansible-playbook -i inventory network_deploy_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo 
+echo "Verifying..."
+echo "Network #1: [m.getEnvId()/]_net"
+docker inspect -f '{{.Name}} - {{.NetworkSettings.Networks.[m.getEnvId()/]_net.IPAddress }} : {{.NetworkSettings.Ports}}' $(docker ps -q --filter "network=[m.getEnvId()/]_net")
+echo
+echo "Network #2: internal_net"
+docker inspect -f '{{.Name}} - {{.NetworkSettings.Networks.internal_net.IPAddress }} : {{.NetworkSettings.Ports}}' $(docker ps -q --filter "network=internal_net")
+echo
+echo "Operation complete."
+echo "You can now perform some manual inspections, if thus desired."
+echo "It is recommended to switch back to the (localhost EE1) default context, as soon inspections are completed. Command: docker context use default"
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public destroyBash(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/2_destroy.sh', false, 'UTF-8')]
+#!/bin/bash
+clear
+echo
+echo "Ensure is using the correct context [m.getEnvId()/]..."
+docker context use [m.getEnvId()/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Stopping all running containers belonging to this EE..."
+docker container stop [m.getApplicationServerElement().valueOf('container_name')/]
+docker container stop [m.getDatabaseServerElement().valueOf('container_name')/]
+[if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+docker container stop cert-one rproxy
+[/if]
+echo
+echo "Destroying all filesystem objects belonging to this EE..."
+echo "Symlink:"
+echo "EE_data directory:"
+ansible-playbook -i inventory network_destroy_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Destroying all created Docker objects belonging to this EE..."
+echo
+echo "Containers:"
+docker container rm [m.getApplicationServerElement().valueOf('container_name')/]
+docker container rm [m.getDatabaseServerElement().valueOf('container_name')/]
+[if (m.getEnvMachine().valueOf('machine_type') = 'cloud')]
+docker container rm cert-one rproxy
+[/if]
+echo
+echo "Volumes:"
+docker volume rm app_data
+docker volume rm db_data
+echo
+echo "Networks:"
+docker network rm internal_net [m.getEnvId()/]_net
+echo
+echo "Context:"
+echo "First, releasing it by switching back to the 'default' context..."
+docker context use default
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+docker context rm [m.getEnvId()/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Operation completed."
+[/file]
+[/template]
+

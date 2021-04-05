@@ -1,0 +1,86 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+
+[query public getDatabaseServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'DatabaseServer')
+/]
+
+[query public getApplicationServerAPI(emod : Model, apiname : String) : Bag(Dependency) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer').packagedElement->filter(Dependency).source->filter(Port)->select(name = apiname).getClientDependencies()
+/]
+[query public getAppModuleFrontendElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Component)
+/]
+[query public getEnvId(m : Model) : String = 
+  m.getExecEnvArchitectureElement().valueOf('env_id')
+/]
+[query public getExecEnvArchitectureElement(emod : Model) : Package = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture')->filter(Package)->any(1=1)
+/]
+[query public getEnvMachine(m : Model) : ExecutionEnvironment = 
+  m.packagedElement->select(name = m.getEnvId())->filter(ExecutionEnvironment)->any(1=1)
+/]
+
+
+[** ====================================================================*/]
+[template public generate(m : Model)]
+[comment @main/]
+[m.appProperties()/]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public appProperties(m : Model)]
+[file ('/_VCS/ansible_ops/workspace/99_execution-environments/' + m.getEnvId() + '/' + m.getEnvMachine().valueOf('machine_id') + '/EE_data/bind_mounts/config/odoo.conf', false, 'UTF-8')]
+['['/]options]
+addons_path = /mnt/extra-addons
+data_dir = /var/lib/odoo
+; The admin_passwd value i decided to be exactly equal to the sensitive_data.ini's superuser_password field value
+admin_passwd = 
+; csv_internal_sep = ,
+; db_maxconn = 64
+; db_template = template1
+; dbfilter = 
+; debug_mode = False
+; email_from = False
+; limit_memory_hard = 2684354560
+; limit_memory_soft = 2147483648
+; limit_request = 8192
+; limit_time_cpu = 60
+; limit_time_real = 120
+; list_db = False
+; log_db = False
+; log_handler = ['['/]':INFO']
+; log_level = info
+; logfile = None
+; longpolling_port = 8072
+; max_cron_threads = 2
+; osv_memory_age_limit = 1.0
+; osv_memory_count_limit = False
+proxy_mode = True
+; smtp_password = False
+; smtp_port = 25
+; smtp_server = localhost
+; smtp_ssl = False
+; smtp_user = False
+; workers = 0
+; xmlrpc = True
+; xmlrpc_interface = 
+; xmlrpc_port = 8069
+; xmlrpcs = True
+; xmlrpcs_interface = 
+; xmlrpcs_port = 8071
+[/file]
+[/template]
+
+

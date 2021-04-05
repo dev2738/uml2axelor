@@ -1,0 +1,217 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+[query public getAppArchitectureBackendElements(emod : Model) : Bag(Package) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Package)
+/]
+[** Common--------------------------------------------------------------*/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[for (be : Package | m.getAppArchitectureBackendElements())]
+[be.genModule()/]
+[be.packagedElement->filter(Class).genFiles()/]
+[/for]
+[/template]
+
+[template public genFiles(c : Class)]
+[c.genServiceController()/]
+[c.genService()/]
+[c.genServiceImpl()/]
+[/template]
+
+
+[template public genModule(pa : Package) ? (pa.packagedElement->filter(Class).getOperations()->notEmpty())]
+[file ('modules/' + pa.name + '/src/main/java/' + pa.getModel().valueOf('company_group') + '/apps/' + pa.name + '/module/' + pa.name.toUpperFirst() + 'Module.java', false, 'UTF-8')]
+/*
+ * Axelor Business Solutions
+ *
+ * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package [pa.getModel().valueOf('company_group')/].apps.[pa.name/].module;
+[for (c : Class | pa.packagedElement->filter(Class))]
+[if (c.getOperations()->notEmpty())]
+import com.axelor.app.AxelorModule;
+import [pa.getModel().valueOf('company_group')/].apps.[pa.name/].service.[c.name/]Service;
+import [pa.getModel().valueOf('company_group')/].apps.[pa.name/].service.[c.name/]ServiceImpl;
+[/if]
+[/for]
+
+public class [pa.name.toUpperFirst()/]Module extends AxelorModule {
+
+  @Override
+  protected void configure() {
+    [for (c : Class | pa.packagedElement->filter(Class))]
+    [if (c.getOperations()->notEmpty())]
+    bind([c.name/]Service.class).to([c.name/]ServiceImpl.class);
+    [/if]
+    [/for]
+  }
+}
+[/file] 
+[/template]
+
+
+[template public genServiceController(c : Class) ? (c.getOperations()->notEmpty())] 
+[comment @main/]
+[file ('modules/' + c._package.name + '/src/main/java/' + c.getModel().valueOf('company_group') + '/apps/' + c._package.name + '/web/' + c.name + 'Controller.java', false, 'UTF-8')]
+/*
+ * Axelor Business Solutions
+ *
+ * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package [c.getModel().valueOf('company_group')/].apps.[c._package.name/].web;
+
+import [c.getModel().valueOf('company_group')/].[c._package.name/].db.[c.name/];
+import [c.getModel().valueOf('company_group')/].apps.[c._package.name/].service.[c.name/]Service;
+import com.axelor.inject.Beans;
+import com.axelor.rpc.ActionRequest;
+import com.axelor.rpc.ActionResponse;
+import com.google.inject.Singleton;
+import java.lang.invoke.MethodHandles;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+@Singleton
+public class [c.name/]Controller {
+
+  private final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+[for (op : Operation | c.getOperations())]
+  public void [op.name/](ActionRequest request, ActionResponse response) {
+  
+    [c.name/] obj = request.getContext().asType([c.name/].class);
+    [if (op.type.name <> 'void')]obj = [/if]Beans.get([c.name/]Service.class).[op.name/](obj);
+    response.setValues(obj);
+  }
+  
+[/for]
+}
+[/file] 
+[/template]
+
+
+[template public genService(c : Class) ? (c.getOperations()->notEmpty())] 
+[comment @main/]
+[file ('modules/' + c._package.name + '/src/main/java/' + c.getModel().valueOf('company_group') + '/apps/' + c._package.name + '/service/' + c.name + 'Service.java', false, 'UTF-8')]
+/*
+ * Axelor Business Solutions
+ *
+ * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package [c.getModel().valueOf('company_group')/].apps.[c._package.name/].service;
+
+import [c.getModel().valueOf('company_group')/].[c._package.name/].db.[c.name/];
+
+public interface [c.name/]Service {
+[for (op : Operation | c.getOperations())]
+  [op.type.name/] [op.name/]([c.name/] obj);
+[/for]
+}
+[/file] 
+[/template]
+ 
+[template public genServiceImpl(c : Class) ? (c.getOperations()->notEmpty())] 
+[comment @main/]
+[file ('modules/' + c._package.name + '/src/main/java/' + c.getModel().valueOf('company_group') + '/apps/' + c._package.name + '/service/' + c.name + 'ServiceImpl.java', false, 'UTF-8')]
+/*
+ * Axelor Business Solutions
+ *
+ * Copyright (C) 2021 Axelor (<http://axelor.com>).
+ *
+ * This program is free software: you can redistribute it and/or  modify
+ * it under the terms of the GNU Affero General Public License, version 3,
+ * as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU Affero General Public License for more details.
+ *
+ * You should have received a copy of the GNU Affero General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+package [c.getModel().valueOf('company_group')/].apps.[c._package.name/].service;
+
+import [c.getModel().valueOf('company_group')/].[c._package.name/].db.[c.name/];
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.lang.invoke.MethodHandles;
+
+public class [c.name/]ServiceImpl implements [c.name/]Service {
+
+  private final Logger logger = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
+
+[for (op : Operation | c.getOperations())]
+  @Override
+  public [op.type.name/] [op.name/]([c.name/] obj) {
+  [for (tr : Transition | c.nestedClassifier->filter(StateMachine).region.transition)]
+    [if (tr.name = op.name)]
+    if (obj.[tr.guard.specification.stringValue()/]) {
+       obj.setStatusSelect([tr.target.name.substring(1, 2).toInteger()/]);
+      return;
+    } 
+    
+    // Fine-tune the statemachine code above
+    
+    [/if]
+  [/for]
+
+    // Add algorithm here      
+
+    [if (op.type.name = c.name)]
+    return obj;
+    [/if]
+  }
+  
+[/for]
+}
+[/file] 
+[/template]
+

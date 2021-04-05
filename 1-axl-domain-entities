@@ -1,0 +1,156 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+[query public getAppModuleBackendElement(emod : Model) : Bag(Package) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Package)
+/]
+[** Common--------------------------------------------------------------*/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[for (be : Package | m.getAppModuleBackendElement())]
+[be.packagedElement->filter(Class).genDomain()/]
+[/for]
+[/template]
+
+[template public genDomain(c : Class) ? (not c.name.contains('com.axelor'))]
+[file ('modules/' + c._package.name + '/src/main/resources/domains/'.concat(c.name).concat('.xml'), false, 'UTF-8')]
+<?xml version="1.0" encoding="UTF-8"?>
+<domain-models xmlns="http://axelor.com/xml/ns/domain-models"
+               xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+               xsi:schemaLocation="http://axelor.com/xml/ns/domain-models
+               http://axelor.com/xml/ns/domain-models/domain-models_5.3.xsd">
+
+    <module name="[c._package.name.toLower()/]" package="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db" />
+
+	[c.genSequence()/]
+
+	[c.genEntity()/]
+	
+</domain-models>
+[/file]
+[/template]
+
+
+[**-----------------------------------------------------------------
+ * Generates an Axelor sequence, when the attribute with ID-checked flag is present.
+ * @param c UML Class.
+*/]
+[template public genSequence(c : Class)]
+[for (p : Property | c.attribute)]
+[if (p.name.trim() = 'sequenceNumber')]
+<sequence name="[c._package.name.toLower()/].[c.name.toLower()/].seq" initial="1" increment="1" padding="3" prefix="[c.name.first(3).toUpper()/]"/> 
+[/if]
+[/for]
+[/template]
+
+[**-----------------------------------------------------------------
+ * Generates the domain entity.
+ * @param c UML Class.
+*/]
+[template public genEntity(c : Class)]
+<entity name="[c.name/]">
+
+    [comment Generate the attributes/]
+	[c.attribute.genFields()/]
+	
+    [comment Generate the associations/]
+	[for (a : Association | c.getAssociations())]
+	
+	  [comment It is Composition/]
+      [if (a.ownedEnd.aggregation->includes(AggregationKind::composite))]
+        [for (p : Property | a.ownedEnd)]
+            [if (p.type.name = c.name)]
+                [if (p.isComposite)]
+    <many-to-one name="[p.getOtherEnd().name/]" ref="[p.getOtherEnd().type.name/]" required="true"/>
+                [else]
+    <one-to-many name="[p.getOtherEnd().name/]" ref="[p.getOtherEnd().type.name/]" mappedBy="[p.name/]" orphanRemoval="true"/>
+                [/if]
+            [/if]
+        [/for]      
+        
+	  [comment It is Aggregation/]
+      [elseif (a.ownedEnd.aggregation->includes(AggregationKind::shared))]
+        [for (p : Property | a.ownedEnd)]
+            [if (p.type.name = c.name)]
+                [if (p.aggregation = AggregationKind::shared)]
+    <many-to-one name="[p.getOtherEnd().name/]" ref="[p.getOtherEnd().type.name/]" required="true"/>
+                [else]
+    <one-to-many name="[p.getOtherEnd().name/]" ref="[p.getOtherEnd().type.name/]" mappedBy="[p.name/]" orphanRemoval="false"/>
+                [/if]
+            [/if]
+        [/for]      
+      
+	  [comment It is Unidirectional Association/]
+      [elseif (a.navigableOwnedEnd->size() = 1)]
+        [for (p : Property | a.ownedEnd)]
+            [if (p.type.name = c.name)]
+                [if (not p.isNavigable())]
+    <many-to-one name="[p.getOtherEnd().name/]" ref="[p.getOtherEnd().type.name/]" required="true"/>
+                [/if]
+            [/if]
+        [/for]      
+
+
+	  [comment It is Bidirectional Association/]
+      [elseif (a.navigableOwnedEnd->size() = 2)]
+        Bidirectional Association:under construction
+      [/if]
+	[/for]
+	
+</entity>
+[/template]
+
+[**-----------------------------------------------------------------
+ * Generates entity field code.
+ * @param p UML Property.
+*/]
+[template public genFields(p : Property) ? ((p.type <> null) and p.type.name.isValid())]
+[comment Field types/]
+<[p.type.name.toType().trim()/] name="[p.name/]"
+[comment Field extra attributes/]
+[if (p.lower = 1)]              required="true"[/if]
+[if(p.name.trim() = 'sequenceNumber')]  sequence="[p.class._package.name.toLower()/].[p.class.name.toLower()/].seq" readonly="true" [/if]
+[if (p.type.name.toType().trim() = 'decimal')]  precision="5" scale="2"[/if]
+[if (p.name.trim() = 'name') or (p.name.trim() = 'code')]   unique="true" min="2" max="50" [/if]
+[if (p.name.trim() = 'picture')]  image="true"[/if]
+[if (p.name.trim() = 'statusSelect')] selection="[p.class.name.toLower()/].status.select" title="Status" default="1"[/if]
+[if (p.name.trim() = 'notes')]  large="true" multiline="true"[/if]
+/>['\n'/]
+[/template]
+
+[**----------------------------------------------------------------
+ * Translates UML Type to it's equivalent in Axelor type.
+ * @param s String.
+*/]
+[template public toType(s : String)]
+[if (s.equalsIgnoreCase('Integer'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Boolean'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Date'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('LocalDate'))]	date
+	[elseif (s.equalsIgnoreCase('Real'))]	decimal
+	[elseif (s.equalsIgnoreCase('Decimal'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Binary'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Long') or s.equalsIgnoreCase('String') or s.equalsIgnoreCase('Char'))]	[s.toLower()/]
+[else] [s/]	
+[/if]
+[/template]
+
+[**
+ * Verify if the given string is not null and not empty.
+ * @param n String.
+*/]
+[query public isValid(n : String) : Boolean =
+	 n <> null and n <> ''
+/]
+

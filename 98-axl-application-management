@@ -1,0 +1,387 @@
+[module newgenerator('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+[query public getApplicationServerAPI(emod : Model, apiname : String) : Bag(Dependency) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer').packagedElement->filter(Dependency).source->filter(Port)->select(name = apiname).getClientDependencies()
+/]
+[query public getAppModuleFrontendElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Component)
+/]
+[query public getDatabaseServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'DatabaseServer')
+/]
+[query public getApplicationServerElement(emod : Model) : Bag(Component) = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture').ownedElement->filter(Component)->select(name = 'ApplicationServer')
+/]
+[query public getExecEnvArchitectureElement(emod : Model) : Package = 
+    emod.packagedElement->select(name = 'ExecEnvArchitecture')->filter(Package)->any(1=1)
+/]
+
+[** Common--------------------------------------------------------------*/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[for (ee : ExecutionEnvironment | m.packagedElement->filter(ExecutionEnvironment))]
+[ee.playbookSensitiveDataFile(m)/]
+[ee.inventoryFile(m)/]
+[ee.ansibleDbUserCreatorPlay(m)/]
+[ee.ansibleDbRemovePlay(m)/]
+[ee.ansibleWarUploadPlay(m)/]
+[ee.ansibleWarRemovePlay(m)/]
+[ee.appArtifactsBuildBash(m)/]
+[ee.appArtifactsDeployBash(m)/]
+[ee.appArtifactsUndeployBash(m)/]
+[/for]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+
+[template public playbookSensitiveDataFile(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/sensitive_data.ini', false, 'UTF-8')]
+['['/][m.getDatabaseServerElement().name/]]
+dbname=[m.name/]_db
+username=[ee.valueOf('machine_type')/]_adm
+password=
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public inventoryFile(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/inventory/hosts', false, 'UTF-8')]
+['['/]ee_containers]
+[m.getDatabaseServerElement().name/]  ansible_host=[m.getDatabaseServerElement().valueOf('container_name')/]
+[m.getApplicationServerElement().name/]  ansible_host=[m.getApplicationServerElement().valueOf('container_name')/]
+
+['['/]ee_containers:vars]
+ansible_python_interpreter=/usr/bin/python3
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public ansibleDbUserCreatorPlay(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/db_create_playbook.yml', false, 'UTF-8')]
+---
+- name: Create the artifact '[m.name/]_db' in the container named '[m.getDatabaseServerElement().valueOf('container_name')/]' at the '[ee.name/]' exec environment
+  hosts: [m.getDatabaseServerElement().name/]
+  gather_facts: no
+  connection: docker
+
+  vars:
+    postgresql_user: postgres
+    postgresql_group: postgres
+    postgresql_application_database: "{{ lookup('ini', 'dbname section=[m.getDatabaseServerElement().name/] file=sensitive_data.ini') }}"
+    postgresql_application_user:     "{{ lookup('ini', 'username section=[m.getDatabaseServerElement().name/] file=sensitive_data.ini') }}"
+    postgresql_application_pass:     "{{ lookup('ini', 'password section=[m.getDatabaseServerElement().name/] file=sensitive_data.ini') }}"
+    postgresql_unix_socket_directories:
+      - /var/run/postgresql
+    postgresql_databases:
+      - {name: "{{ postgresql_application_database }}", lc_collate: en_US.UTF-8}
+    postgresql_users:
+      - {name: "{{ postgresql_application_user }}", password: "{{ postgresql_application_pass }}", encrypted: true, db: "{{ postgresql_application_database }}", priv: all, role_attr_flags: SUPERUSER,CREATEROLE,CREATEDB,LOGIN}
+
+  tasks:
+    - name: Install base packages
+      raw: apk add python3
+
+    - name: Install dependencies
+      apk:
+        name: "{{ item }}"
+        state: installed
+      with_items:
+        - sudo
+        - py3-psycopg2
+
+    - name: Ensure PostgreSQL databases are present.
+      postgresql_db:
+        name: "{{ item.name }}"
+        lc_collate: "{{ item.lc_collate | default('en_US.UTF-8') }}"
+        lc_ctype: "{{ item.lc_ctype | default('en_US.UTF-8') }}"
+        encoding: "{{ item.encoding | default('UTF-8') }}"
+        template: "{{ item.template | default('template0') }}"
+        login_host: "{{ item.login_host | default('localhost') }}"
+        login_password: "{{ item.login_password | default(omit) }}"
+        login_user: "{{ item.login_user | default(postgresql_user) }}"
+        login_unix_socket: "{{ item.login_unix_socket | default(postgresql_unix_socket_directories['['/]0]) }}"
+        port: "{{ item.port | default(omit) }}"
+        owner: "{{ item.owner | default(postgresql_user) }}"
+        state: "{{ item.state | default('present') }}"
+      with_items: "{{ postgresql_databases }}"
+      become: yes
+      become_method: sudo
+      become_user: "{{ postgresql_user }}"
+      vars:
+        ansible_ssh_pipelining: true
+
+    - name: Ensure PostgreSQL users are present.
+      postgresql_user:
+        name: "{{ item.name }}"
+        password: "{{ item.password | default(omit) }}"
+        encrypted: "{{ item.encrypted | default(omit) }}"
+        priv: "{{ item.priv | default(omit) }}"
+        role_attr_flags: "{{ item.role_attr_flags | default(omit) }}"
+        db: "{{ item.db | default(omit) }}"
+        login_host: "{{ item.login_host | default('localhost') }}"
+        login_password: "{{ item.login_password | default(omit) }}"
+        login_user: "{{ item.login_user | default(postgresql_user) }}"
+        login_unix_socket: "{{ item.login_unix_socket | default(postgresql_unix_socket_directories['['/]0]) }}"
+        port: "{{ item.port | default(omit) }}"
+        state: "{{ item.state | default('present') }}"
+      with_items: "{{ postgresql_users }}"
+      become: yes
+      become_method: sudo
+      become_user: "{{ postgresql_user }}"
+      vars:
+        ansible_ssh_pipelining: true
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public ansibleDbRemovePlay(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/db_remove_playbook.yml', false, 'UTF-8')]
+---
+- name: Remove the artifact '[m.name/]_db' in the container named '[m.getDatabaseServerElement().valueOf('container_name')/]' at the '[ee.name/]' exec environment
+  hosts: [m.getDatabaseServerElement().name/]
+  gather_facts: no
+  connection: docker
+
+  tasks:
+    - name: Delete old database
+      postgresql_db:
+        name: "{{ lookup('ini', 'dbname section=[m.getDatabaseServerElement().name/] file=sensitive_data.ini') }}"
+        state: absent
+
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public ansibleWarUploadPlay(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/war_upload_playbook.yml', false, 'UTF-8')]
+---
+- name: Copy the artifact '[m.name/]-[ee.name/].war' to the  container named '[m.getApplicationServerElement().valueOf('container_name')/]' at the '[ee.name/]' exec environment
+  gather_facts: no
+  hosts: [m.getApplicationServerElement().name/]
+  connection: docker
+
+  vars:
+     src_war_file: [m.name/]-[ee.name/].war
+     dst_war_file: [m.name/].war
+     src_war_path: ../../../build/libs
+     dst_war_path: /usr/local/tomcat/webapps
+     
+  tasks:
+    - name: Install base packages
+      raw: apk add python2
+
+    - name: Delete old war file
+      file: 
+        path="{{ dst_war_path }}/{{ dst_war_file }}" 
+        state=absent
+
+    - name: Copy new war file
+      copy:
+        src: "{{ src_war_path }}/{{ src_war_file }}"
+        dest: "{{ dst_war_path }}/{{ dst_war_file }}"
+
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public ansibleWarRemovePlay(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/war_remove_playbook.yml', false, 'UTF-8')]
+---
+- name: Remove the artifact '[m.name/].war' from the  container named '[m.getApplicationServerElement().valueOf('container_name')/]' at the '[ee.name/]' exec environment
+  gather_facts: no
+  hosts: [m.getApplicationServerElement().name/]
+  connection: docker
+
+  vars:
+     dst_war_file: [m.name/].war
+     dst_war_path: /usr/local/tomcat/webapps
+     
+  tasks:
+    - name: Delete war file
+      file: 
+        path="{{ dst_war_path }}/{{ dst_war_file }}" 
+        state=absent
+
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public appArtifactsBuildBash(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/2_build.sh', false, 'UTF-8')]
+#!/bin/bash
+echo
+#Including .ini file
+. ./sensitive_data.ini
+echo "Checking if sensitive_data.ini fields are all defined...."
+echo "dbname=${dbname}   username=${username}  password=${password}"
+if ['['/] -z $dbname ] || ['['/] -z $username ] || ['['/] -z $password ]; then
+  echo "Error: one or more fields are not defined."
+  echo
+  echo "Actions required:"
+  echo "1 set a password equal in both below files:"
+  echo "   - nano sensitive_data.ini > password"
+  echo "   - nano ../../../src/main/resources/application.properties > db.default.password"
+  echo "2 Retry the build"
+  echo
+  echo "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Building the project for deployment at [ee.name/] - [ee.valueOf('machine_id')/] ...."
+cd ../../../
+./gradlew -x test build 
+ if ['['/] $? -ne 0 ];
+ then
+   echo -e "Exiting...\n"
+   exit 1
+ fi
+echo
+mv build/libs/[m.name/].war build/libs/[m.name/]-[ee.name/].war
+echo
+echo "Generated file: build/libs/[m.name/]-[ee.name/].war"
+echo
+echo "    Next step: deploy the WAR to an EE. ";
+echo "       $ cd 98_management/[ee.name/]/[ee.valueOf('machine_id')/] && sh 3_deploy.sh";
+
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public appArtifactsDeployBash(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/3_deploy.sh', false, 'UTF-8')]
+#!/bin/bash
+echo "Deploying artifacts to [ee.name/] - [ee.valueOf('machine_id')/] ..."
+echo
+#Including .ini file
+. ./sensitive_data.ini
+echo "Checking if sensitive_data.ini fields are all defined...."
+echo "dbname=${dbname}   username=${username}  password=${password}"
+if ['['/] -z $dbname ] || ['['/] -z $username ] || ['['/] -z $password ]; then
+  echo "Error: one or more fields are not defined."
+  echo
+  echo "Actions required:"
+  echo "1 set a password equal in both below files:"
+  echo "   - nano sensitive_data.ini > password"
+  echo "   - nano ../../../src/main/resources/application.properties > db.default.password"
+  echo "2 Re-build the project (due the above change in application.properties): $ sh 2_build.sh"
+  echo "3 Retry this deploy: $ cd 98_management/[ee.name/]/[ee.valueOf('machine_id')/] && sh 3_deploy.sh"
+  echo
+  echo "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Switching to docker context [ee.name/]..."  
+docker context use [ee.name/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo
+echo "DB:"
+ansible-playbook -i inventory db_create_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo "Exiting...\n"
+  exit 1
+fi
+echo
+echo "WAR:"
+ansible-playbook -i inventory war_upload_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Verifying..."
+echo "Database:"
+docker container exec [m.getDatabaseServerElement().valueOf('container_name')/] psql -U postgres --list
+echo "WAR:"
+docker container exec [m.getApplicationServerElement().valueOf('container_name')/] ls webapps
+echo
+echo "Operation complete."
+echo
+echo "The next action is to watch the app startup completed. Run:"
+echo "   [ '['/]new terminal] $ docker logs tomcat -f"
+echo " ...press CTRL-C when satisfied, or when arised the info message 'Ready to serve...'."
+echo
+echo "If in case of errors, do somes of these actions:"
+echo "1- drill-deeper in case of arised exception, run (per today date): "
+echo "   $ docker container exec tomcat cat logs/localhost.yyyy-mm-dd.log"
+echo "2- Open the project at IntelliJ IDEA and browse the Axelor schema (at folder modules/(module)/src/main/resources) for malformed XML errors."
+echo
+echo "When all is ok, don't forget to manually switch back to the 'default' context:"
+echo "   $ docker context use default"
+echo
+echo "Launch the application homepage:"
+echo "   $ xdg-open http://[ee.valueOf('domain_name')/]/[m.name.toLower()/]"
+echo
+[/file]
+[/template]
+
+[** ---------------------------------------------------------------*/]
+[template public appArtifactsUndeployBash(ee : ExecutionEnvironment, m : Model)]
+[file ('98_management/' + ee.name + '/' + ee.valueOf('machine_id') + '/4_undeploy.sh', false, 'UTF-8')]
+#!/bin/bash
+echo
+echo "Switching to docker context [ee.name/]..."  
+docker context use [ee.name/] 
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+echo "Un-deploying artifacts from [ee.name/] - [ee.valueOf('machine_id')/] ..."
+echo "WAR:"
+ansible-playbook -i inventory war_remove_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo "Exiting...\n"
+  exit 1
+fi
+echo "DB:"
+ansible-playbook -i inventory db_remove_playbook.yml
+if [ '['/] $? -ne 0 ];
+then
+  echo "Fail detected."
+  echo "Causes and possible fixes:"
+  echo "1-"
+  echo "Error message: Database query failed: (databasename) is being accessed by other users. DETAIL:  There are 5 other sessions using the database."
+  echo "Fix: run this session force/termination CLI command then retry again:"
+  echo "$ docker container exec [m.getDatabaseServerElement().valueOf('container_name')/] psql -U postgres -c \"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '[m.name/]_db' AND pid <> pg_backend_pid();\""
+  echo
+  echo "Exiting...\n"
+  exit 1
+fi
+echo
+echo "Verifying..."
+echo "Database:"
+docker container exec [m.getDatabaseServerElement().valueOf('container_name')/] psql -U postgres --list
+echo "WAR:"
+docker container exec [m.getApplicationServerElement().valueOf('container_name')/] ls webapps
+echo
+echo "Operation complete."
+echo
+echo "Switching back to the 'default' context..."
+docker context use default
+if [ '['/] $? -ne 0 ];
+then
+  echo -e "Exiting...\n"
+  exit 1
+fi
+[/file]
+[/template]
+

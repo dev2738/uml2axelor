@@ -1,0 +1,378 @@
+[** ---------------------------------------------------------------
+ * Generates form layouts for Foundation entities
+*/]
+[module axlViewsForm('http://www.eclipse.org/uml2/5.0.0/UML', 'http://www.eclipse.org/emf/2002/Ecore')/]
+
+[** Common--------------------------------------------------------------*/]
+[** Common--------------------------------------------------------------*/]
+[query public valueOf(emod : EModelElement, pname : String) : String = 
+    if (emod.hasProperty(pname)) then
+        emod.getEAnnotation('genmymodel').details->any(key = pname).value
+    else 
+        null
+    endif
+/]
+[query public hasProperty(emod : EModelElement, pname : String) : Boolean = 
+    emod.getEAnnotation('genmymodel').details->exists(key = pname)
+/]
+[query public getAppModuleBackendElement(emod : Model) : Bag(Package) = 
+    emod.packagedElement->select(name = 'AppArchitecture').ownedElement->filter(Package)
+/]
+[** Common--------------------------------------------------------------*/]
+
+[template public generate(m : Model)]
+[comment @main/]
+[for (be : Package | m.getAppModuleBackendElement())]
+[be.genSelects()/]
+[be.packagedElement->filter(Class).genView()/]
+[/for]
+[/template]
+
+
+[** ---------------------------------------------------------------*/]
+[template public genSelects(pa : Package)] 
+[file ('modules/' + pa.name + '/src/main/resources/views/Selects.xml', false, 'UTF-8')]
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<object-views xmlns="http://axelor.com/xml/ns/object-views"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://axelor.com/xml/ns/object-views http://axelor.com/xml/ns/object-views/object-views_5.3.xsd">
+
+[for (c : Class | pa.packagedElement->filter(Class))] 
+    [if (c.attribute->exists(name = 'statusSelect'))]
+	<selection name="[c.name.toLower()/].status.select">
+        [for (lt : EnumerationLiteral | pa.packagedElement->filter(Enumeration)->select(name = c.name).ownedLiteral->sortedBy(name))]
+        <option value="[lt.name.substring(1, 2).toInteger()/]">[lt.name.substring(4)/]</option>
+        [/for]
+	</selection>
+    [/if]
+    
+[/for]	
+</object-views>
+[/file]
+[/template]
+
+
+[** ---------------------------------------------------------------*/]
+[template public genView(c : Class) ? (not c.name.contains('com.axelor'))]
+[file ('modules/' + c._package.name + '/src/main/resources/views/'.concat(c.name).concat('.xml'), false, 'UTF-8')]
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<object-views xmlns="http://axelor.com/xml/ns/object-views"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="http://axelor.com/xml/ns/object-views
+              http://axelor.com/xml/ns/object-views/object-views_5.3.xsd">
+
+	[c.genGrid()/] 
+    [c.genF10Form()/] 
+    [c.genF11Form()/] 
+    [c.genF13Form()/] 
+    [c.genF20Form()/] 
+
+[for (co : Comment | c.nestedClassifier->filter(StateMachine).region.ownedComment)]
+TODO move this from here to its proper <form/form> place somewhere above
+[co._body/]
+[/for]
+
+</object-views>
+[/file]
+[/template]
+
+
+[** ---------------------------------------------------------------------------
+ * Generates the grid view.
+ * @param c UML Class.
+*/]
+[template public genGrid(c : Class)]
+<!-- grid-view definition -->
+<grid name="[c.name.toLower()/]-grid" title="[c.valueOf('DISPLAY_NAME_PL')/]" model="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db.[c.name/]"[if (c.attribute->exists(name = 'statusSelect'))] orderBy="statusSelect"[/if]>
+
+[comment Menubar Item/]
+[if (c.hasProperty('_DATAIMPORT'))]
+    <menubar>
+        <menu name="toolsMenu" title="Tools" icon="fa-wrench">
+            <item name="import[c.name/]Items" title="Import [c.valueOf('DISPLAY_NAME_PL')/]" action="action-method-import-[c.name.toLower()/]s"/>
+        </menu>
+    </menubar>
+[/if]
+
+[comment Single-value reference field types - by: Unidirectional Association/]
+[for (a : Association | c.getAssociations())]
+[if (a.navigableOwnedEnd->size() = 1)]
+[for (p : Property | a.ownedEnd)]
+    [if (p.type.name = c.name)]
+        [if (not p.isNavigable())]
+    <field name="[p.getOtherEnd().name/]"
+    />['\n'/]
+        [/if]
+    [/if]
+[/for]      
+[/if]
+[/for]      
+
+[comment Ordinary fields/]
+[for (p : Property | c.attribute)]
+    [if (p.hasProperty('_IS_GRID_COLUMN') = true)]
+    <field name="[p.name/]" />
+    [/if]
+[/for]        
+
+</grid>
+
+[comment Action method for the Menubar Item/]
+[if (c.hasProperty('_DATAIMPORT'))]
+<!-- action-method definition here -->
+<action-method name="action-method-import-[c.name.toLower()/]s">
+    <call class="[c.getModel().valueOf('company_group')/].apps.[c._package.name/].web.[c.name/]ImportController" method="get[c.name/]ImportConfig" />
+</action-method>
+[/if]
+[/template]
+
+[** ---------------------------------------------------------------------------
+ * Generates the F10 form when a class contains the custom property "_FORM=F10"
+ * @param c UML Class.
+*/]
+[template public genF10Form(c : Class) ? (c.valueOf('_FORM') = 'F10')] 
+<!-- form-view definition -->
+<form name="[c.name.toLower()/]-form" title="[c.valueOf('DISPLAY_NAME_SG')/]" model="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db.[c.name/]" width="mini">
+<panel title="Overview">
+[comment Single-value reference field types - by: Unidirectional Association/]
+[for (a : Association | c.getAssociations())]
+[if (a.navigableOwnedEnd->size() = 1)]
+  <field name="[a.navigableOwnedEnd.name/]"/>
+[/if]
+[/for]      
+
+[comment Ordinary field types/]
+[for (p : Property | c.attribute)]
+  <field name="[p.name/]" />
+[/for]        
+</panel>
+</form>
+[/template]
+
+
+[** ---------------------------------------------------------------------------
+ * Generates the F11 form when a class contains the custom property "_FORM=F11"
+ * @param c UML Class.
+*/]
+[template public genF11Form(c : Class) ? (c.valueOf('_FORM') = 'F11')] 
+<!-- form-view definition -->
+<form name="[c.name.toLower()/]-form" title="[c.valueOf('DISPLAY_NAME_SG')/]" model="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db.[c.name/]" width="mini">
+..under construction
+</form>
+[/template]
+
+
+
+[** ---------------------------------------------------------------------------
+ * Generates the F13 form when a class contains the custom property "_FORM=F13"
+ * @param c UML Class.
+*/]
+[template public genF13Form(c : Class) ? (c.valueOf('_FORM') = 'F13')] 
+<!-- form-view definition -->
+<form name="[c.name.toLower()/]-form" title="[c.valueOf('DISPLAY_NAME_SG')/]" model="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db.[c.name/]" width="large">
+[comment Ordinary field types/]
+  <panel name="mainPanel">
+    <panel name="namePanel" colSpan="12">
+      <field name="fullName" showTitle="false" colSpan="12" css="label-bold bold large" width="600">
+        <viewer><!['['/]CDATA['['/]
+ 	      <strong>['['/]{{record.code}}] {{record.name}}</strong>
+	    ]]></viewer>
+        <editor x-show-titles="false">
+          <field name="code" showTitle="false" colSpan="5" css="label-bold bold large" placeholder="Code" x-bind="{{code|unaccent|uppercase}}"/>
+          <field name="name" showTitle="false" colSpan="7" css="label-bold bold large" width="800" placeholder="Name" required="true"/>
+        </editor>
+      </field>
+    </panel>
+    <panel name="imagePanel" colSpan="2">
+      <field name="picture" showTitle="false" colSpan="12" widget="Image">
+        <viewer><!['['/]CDATA['['/]
+
+     	  <img ng-show="record.picture" ng-src="{{$image('picture', 'content')}}" />
+              <img ng-show="!record.picture" src="img/product-default.png" />
+
+    	]]></viewer>
+      </field>
+    </panel>
+    <panel name="productInfoPanel" colSpan="10">
+      <panel name="productTypologyPanel" title="Product typology" colSpan="6" colWidths="30%,70%">
+        <field name="productTypeSelect" colSpan="12" onChange="action-group-base-product-producttype-onchange" required="true"/>
+      </panel>
+      <panel name="categorizationPanel" title="Categorization" colSpan="6" colWidths="30%,70%">
+        <field name="productCategory" colSpan="12" canEdit="false" form-view="product-category-form" grid-view="product-category-grid"/>
+      </panel>
+    </panel>
+  </panel>
+  <panel-tabs name="productSpecificAttributes" title="Product specific attributes">
+    <panel name="salePanel" title="Sale" showTitle="false">
+      <panel name="subSalePanel" title="Sales" colSpan="6">
+        [for (p : Property | c.attribute)]
+        [if (p.valueOf('_FORM_PANEL') = 'subSalePanel')]
+        <field name="[p.name/]" />
+        [/if]
+        [/for]  
+      </panel>
+      <panel name="descriptionPanel" title="Description" colSpan="12">
+        <field name="description" showTitle="false" colSpan="12" widget="html"/>
+      </panel>
+    </panel>
+    <panel name="packingPanel" title="Packing" hideIf="isShippingCostsProduct || productTypeSelect =='service'">
+      <panel name="massPanel" title="Mass" colSpan="6">
+        [for (p : Property | c.attribute)]
+        [if (p.valueOf('_FORM_PANEL') = 'massPanel')]
+        <field name="[p.name/]" />
+        [/if]
+        [/for]  
+      </panel>
+      <panel name="articleDimensionPanel" title="Article dimension" colSpan="6">
+        [for (p : Property | c.attribute)]
+        [if (p.valueOf('_FORM_PANEL') = 'articleDimensionPanel')]
+        <field name="[p.name/]" />
+        [/if]
+        [/for]  
+      </panel>
+    </panel>
+  </panel-tabs>
+</form>
+[/template]
+
+
+
+[** ---------------------------------------------------------------------------
+ * Generates the F20 form when a class contains the custom property "_FORM=F20"
+ * @param c UML Class.
+*/]
+[template public genF20Form(c : Class) ? (c.valueOf('_FORM') = 'F20')] 
+<!-- form-view definition -->
+<form name="[c.name.toLower()/]-form" title="[c.valueOf('DISPLAY_NAME_SG')/]" model="[c.getModel().valueOf('company_group')/].[c._package.name.toLower()/].db.[c.name/]" width="mid">
+
+[c.genFieldsPanel()/]
+[c.genO2M2MPanel()/]
+</form>
+[/template]
+
+
+
+[** -----------------------------------------------------------------------------------------------------------------------------
+ * Support templates
+ * @param c UML Class.
+*/]
+
+[template public genFieldsPanel(c : Class)]
+<panel title="[c.valueOf('DISPLAY_NAME_SG')/] Details">
+
+[comment Ordinary field types/]
+[for (p : Property | c.attribute)]
+  [comment Raw layer/]
+  <field name="[p.name/]"
+  
+  [comment "Widget layer"/]
+  [if (p.name.trim() = 'statusSelect')] colSpan="6" widget="NavSelect" showTitle="true" readonly="true"[/if]
+  [if (p.type.name.toType().trim() = 'boolean')]  widget="boolean-switch"[/if]
+  
+  [comment For "Link widget to operation"/]
+  [if (p.hasProperty('onChange'))]
+    onChange="[c.getModel().valueOf('company_group')/].apps.[c._package.name/].web.[c.name/]Controller:[p.valueOf('onChange')/]"    
+  [/if]
+  
+  [comment "Business Rules - "see it, use it, do it" - per state/]
+  [for (st : Vertex | c.nestedClassifier->filter(StateMachine).region.subvertex)]
+    [if (st.hasProperty(p.name))]
+	[st.valueOf(p.name)/]="[st.incoming.guard.specification.stringValue()/]"
+    [/if]
+  [/for]
+  />['\n'/]
+[/for]
+
+[comment Single-value reference field types - by: Unidirectional Association/]
+[for (a : Association | c.getAssociations())]
+[if (a.navigableOwnedEnd->size() = 1)]
+[for (p : Property | a.ownedEnd)]
+    [if (p.type.name = c.name)]
+        [if (not p.isNavigable())]
+  <field name="[p.getOtherEnd().name/]" form-view="[p.getOtherEnd().type.name.toLower()/]-form" grid-view="[p.getOtherEnd().type.name.toLower()/]-grid"
+
+    [comment "Business Rules - "see it, use it, do it" - per state/]
+    [for (st : Vertex | c.nestedClassifier->filter(StateMachine).region.subvertex)]
+      [if (st.hasProperty(p.getOtherEnd().name))]
+  [st.valueOf(p.getOtherEnd().name)/]="[st.incoming.guard.specification.stringValue()/]"
+      [/if]
+    [/for]
+  />['\n'/]
+        [/if]
+    [/if]
+[/for]      
+[/if]
+[/for]      
+</panel>
+[/template]
+
+[template public genO2M2MPanel(c : Class)]
+[comment Multiple-value reference field types - assoc: Composition/]
+[for (a : Association | c.getAssociations())]
+[if (a.ownedEnd.aggregation->includes(AggregationKind::composite))]
+[for (p : Property | a.ownedEnd)]
+    [if (p.type.name = c.name)]
+        [if (not p.isComposite)]
+  <panel-related field="[p.getOtherEnd().name/]" title="[p.getOtherEnd().type.valueOf('DISPLAY_NAME_PL')/]" 
+    editable="true" 
+    canMove="true"
+    [comment For "link to operation"/]
+    [if (a.hasProperty('onChange'))]
+    onChange="[c.getModel().valueOf('company_group')/].apps.[c._package.name/].web.[c.name/]Controller:[a.valueOf('onChange')/]"    
+    [/if]
+    [comment "Business Rules - "see it, use it, do it" - per state/]
+    [for (st : Vertex | c.nestedClassifier->filter(StateMachine).region.subvertex)]
+      [if (st.hasProperty(p.getOtherEnd().name))]
+    [st.valueOf(p.getOtherEnd().name)/]="[st.incoming.guard.specification.stringValue()/]"
+      [/if]
+    [/for]
+  >['\n'/]
+
+  [comment Single-value reference field types - by: Unidirectional Association/]
+  [for (a : Association | p.getOtherEnd().type.getAssociations())]
+  [if (a.navigableOwnedEnd->size() = 1)]
+    <field name="[a.navigableOwnedEnd.name/]"/>
+  [/if]
+  [/for]      
+
+  [comment Ordinary field types/]
+  [for (pp : Property | p.getOtherEnd().type.ownedElement->filter(Property))]
+    <field name="[pp.name/]"/>
+  [/for]      
+  </panel-related>  
+        [/if]
+    [/if]
+[/for]      
+[/if]
+[/for]      
+[/template]
+
+[template public genSidebarPanel(c : Class)]
+[/template]
+
+[**
+ * Translates UML Type to it's equivalent in Axelor type.
+ * @param s String.
+*/]
+[template public toType(s : String)]
+[if (s.equalsIgnoreCase('Integer'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Boolean'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Date'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('LocalDate'))]	date
+	[elseif (s.equalsIgnoreCase('Real'))]	decimal
+	[elseif (s.equalsIgnoreCase('Decimal'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Binary'))]	[s.toLower()/]
+	[elseif (s.equalsIgnoreCase('Long') or s.equalsIgnoreCase('String') or s.equalsIgnoreCase('Char'))]	[s.toLower()/]
+[else] [s/]	
+[/if]
+[/template]
+
+[**
+ * Verify if the given string is not null and not empty.
+ * @param n String.
+*/]
+[query public isValid(n : String) : Boolean =
+	 n <> null and n <> ''
+/]
+
+
